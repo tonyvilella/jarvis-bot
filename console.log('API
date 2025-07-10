@@ -1,0 +1,1 @@
+app.listen(PORT, ()= ouvindo em %cPORT', 'color:green'));
