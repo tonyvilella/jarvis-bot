@@ -1,8 +1,12 @@
-// src/routes/webhook.js
 const express = require('express');
 const router  = express.Router();
 
-// ✅ Etapa de VERIFICAÇÃO (GET)
+/* ✅ Health-check - GET /webhook/ping */
+router.get('/ping', (_req, res) => {
+  res.json({ status: 'webhook ok' });
+});
+
+/* ✅ Etapa de VERIFICAÇÃO (GET /webhook?hub.mode=... ) */
 router.get('/', (req, res) => {
   const mode      = req.query['hub.mode'];
   const token     = req.query['hub.verify_token'];
@@ -10,14 +14,14 @@ router.get('/', (req, res) => {
 
   if (mode === 'subscribe' && token === process.env.META_VERIFY_TOKEN) {
     console.log('✅ Webhook verificado pelo Meta!');
-    return res.status(200).send(challenge);   // devolve o número que o Meta mandou
+    return res.status(200).send(challenge);   // devolve challenge
   }
-  res.sendStatus(403); // token errado
+  res.sendStatus(403);                         // token errado
 });
 
-// 🌐 Receber eventos (POST)
+/* 🔔 Receber eventos (POST /webhook) */
 router.post('/', (req, res) => {
-  console.log('🔔 Evento IG/Fb:', JSON.stringify(req.body, null, 2));
+  console.log('⚡ Evento IG/Fb:', JSON.stringify(req.body, null, 2));
   res.sendStatus(200);
 });
 
