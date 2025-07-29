@@ -1,0 +1,37 @@
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [dev]          # roda a cada push na dev
+  pull_request:
+    branches: [main]         # roda nos PRs para a main
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20           # mesmo que o Dockerfile
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: |
+          npm run lint --if-present
+
+      - name: Build
+        run: |
+          npm run build --if-present
+
+      - name: Tests
+        run: |
+          npm test --if-present
