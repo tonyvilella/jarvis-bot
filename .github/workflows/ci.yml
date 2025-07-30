@@ -1,11 +1,11 @@
 # .github/workflows/ci.yml
-name: ci          # ✅ precisa estar em minúsculo para bater com “ci / build-test”
+name: ci            # precisa estar em minúsculo para bater com “ci / build-test”
 
 on:
   push:
-    branches: [dev]            # roda a cada push na dev
+    branches: [dev]           # roda a cada push na dev
   pull_request:
-    branches: [main]           # roda nos PRs que miram a main
+    branches: [main]          # roda nos PRs que miram a main
 
 jobs:
   build-test:
@@ -18,20 +18,17 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20      # mesmo Node usado no Dockerfile
-          cache: "npm"
+          node-version: 20    # mesmo Node usado no Dockerfile
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Lint
         run: npm run lint --if-present
-        run: npm run lint --if-present
 
       - name: Build
         run: npm run build --if-present
-        run: npm run build --if-present
 
       - name: Tests
-        run: npm test --if-present
         run: npm test --if-present
