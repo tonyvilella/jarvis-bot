@@ -1,14 +1,16 @@
-name: ci
+# .github/workflows/ci.yml
+name: ci            # precisa estar em minúsculo para bater com “ci / build-test”
 
 on:
   push:
-    branches: [dev]
+    branches: [dev]           # roda a cada push na dev
   pull_request:
-    branches: [main]
+    branches: [main]          # roda nos PRs que miram a main
 
 jobs:
   build-test:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -16,7 +18,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 20    # mesmo Node usado no Dockerfile
           cache: npm
 
       - name: Install dependencies
