@@ -2,17 +2,23 @@
 name: Deploy
 
 on:
+  # publica toda vez que algo novo entra na main
   push:
     branches: [main]          # dispara quando algo cai na main
 
 env:
   GCP_REGION: us-east4        # ajuste se precisar
 
+env:
+  # ajuste se usar outra região
+  GCP_REGION: us-east4
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+ dev
       # 1. Checkout
       - uses: actions/checkout@v4
 
@@ -48,3 +54,4 @@ jobs:
             --region="$GCP_REGION" \
             --port=8080 \
             --allow-unauthenticated
+
