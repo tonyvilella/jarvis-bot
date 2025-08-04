@@ -26,7 +26,7 @@ jobs:
       uses: google-github-actions/setup-gcloud@v2
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
-        install_components: gcloud-beta
+        
 
     # 3 · Constrói a imagem usando Cloud Build e envia para o Artifact Registry
     - name: Build & push image
