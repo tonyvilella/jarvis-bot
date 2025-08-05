@@ -3,25 +3,27 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]        # ajuste conforme o seu fluxo
-  pull_request:
+    # roda para commits em main OU dev
+    branches: [main, dev]
+  pull_request:                # roda em todos os PRs que miram main ou dev
 
+jobs:
 ###############################################################################
 # 1) Build & Test (Node)
 ###############################################################################
-jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Instala Node + cache de dependências
+      # Node + cache de dependências
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm                # acelera builds subsequentes
+          cache: npm
 
+      # instala dependências
       - name: Install dependencies
         run: |
           if [ -f package-lock.json ]; then
@@ -30,17 +32,18 @@ jobs:
             npm install
           fi
 
-      - name: Lint (se existir script)
+      # scripts opcionais – executa só se existirem
+      - name: Lint (se houver)
         run: npm run --if-present lint
 
-      - name: Build (se existir script)
+      - name: Build (se houver)
         run: npm run --if-present build
 
-      - name: Tests (se existir script)
+      - name: Tests (se houver)
         run: npm run --if-present test
 
 ###############################################################################
-# 2) Setup GCloud (apenas se precisar no CI)
+# 2) Setup GCloud (só se precisar usar GCP no CI)
 ###############################################################################
   setup-gcloud:
     needs: build-test
@@ -48,11 +51,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # autentica com a service-account salva em secrets.GCP_SA_KEY
       - id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      # gcloud padrão (sem componentes extras)
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
