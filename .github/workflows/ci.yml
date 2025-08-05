@@ -1,34 +1,60 @@
 # .github/workflows/ci.yml
-name: ci            # precisa estar em minúsculo para bater com “ci / build-test”
+name: CI
 
 on:
   push:
-    branches: [dev]           # roda a cada push na dev
+    branches: [main, dev]        # ajuste se quiser outros branches
   pull_request:
-    branches: [main]          # roda nos PRs que miram a main
 
 jobs:
+###############################################################################
+# 1) Build & Test (Node)
+###############################################################################
   build-test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node + cache
         uses: actions/setup-node@v4
         with:
-          node-version: 20    # mesmo Node usado no Dockerfile
+          node-version: '20'
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
-      - name: Lint
-        run: npm run lint --if-present
+      - name: Lint (se existir script)
+        run: npm run --if-present lint
 
-      - name: Build
-        run: npm run build --if-present
+      - name: Build (se existir)
+        run: npm run --if-present build
 
-      - name: Tests
-        run: npm test --if-present
+      - name: Tests (se existir)
+        run: npm run --if-present test
+
+###############################################################################
+# 2) Setup GCloud (apenas se precisar no CI)
+###############################################################################
+  setup-gcloud:
+    needs: build-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
