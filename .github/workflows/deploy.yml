@@ -1,46 +1,63 @@
-name: Deploy
+# .github/workflows/ci.yml
+name: CI
 
 on:
-  # publica toda vez que algo novo entra na main
-  push:
-    branches: [main]
+  push:                       # roda para commits em main ou dev
+    branches: [main, dev]
+  pull_request:               # roda para todo PR que mira main ou dev
 
-env:
-  # ajuste se usar outra região
-  GCP_REGION: us-east4
-
+###############################################################################
+# 1) Build & Test (Node)
+###############################################################################
 jobs:
-  deploy:
+  build-test:
     runs-on: ubuntu-latest
-
     steps:
-    # 1 · Autentica no Google Cloud com a service-account que você colocou no secret
-    - name: Auth
-      id: auth
-      uses: google-github-actions/auth@v2
-      with:
-        credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: actions/checkout@v4
 
-    # 2 · Instala gcloud + docker + Cloud Build
-    - name: Set up gcloud
-      uses: google-github-actions/setup-gcloud@v2
-      with:
-        project_id: ${{ secrets.GCP_PROJECT_ID }}
-        
+      # Node + cache das dependências
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
 
-    # 3 · Constrói a imagem usando Cloud Build e envia para o Artifact Registry
-    - name: Build & push image
-      env:
-        TAG: "${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis:${{ github.sha }}"
-      run: |
-        gcloud builds submit --tag "$TAG"
+      # instala dependências
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
-    # 4 · Faz rollout no Cloud Run
-    - name: Deploy to Cloud Run
-      run: |
-        gcloud run deploy jarvis-bot-run \
-          --image="$TAG" \
-          --platform=managed \
-          --region="$GCP_REGION" \
-          --port=8080 \
-          --allow-unauthenticated
+      # scripts opcionais
+      - name: Lint (se houver)
+        run: npm run --if-present lint
+
+      - name: Build (se houver)
+        run: npm run --if-present build
+
+      - name: Tests (se houver)
+        run: npm run --if-present test
+
+###############################################################################
+# 2) Setup GCloud (só se precisar usar GCP no CI)
+###############################################################################
+  setup-gcloud:
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # autentica usando o JSON da service-account salvo em secrets.GCP_SA_KEY
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # gcloud padrão (sem componentes extras)
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
