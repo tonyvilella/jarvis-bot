@@ -3,43 +3,58 @@ name: CI
 
 on:
   push:
-    branches: [ main, dev ]      # ajuste conforme seu fluxo
+    branches: [main, dev]        # ajuste se quiser outros branches
   pull_request:
 
 jobs:
+###############################################################################
+# 1) Build & Test (Node)
+###############################################################################
   build-test:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      # (opcional) instala dependências e roda testes
-      - name: Setup Node
+      - name: Setup Node + cache
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: '20'
+          cache: npm
 
-      - name: Install deps
-        run: npm ci
-
-      - name: Run lint & tests
+      - name: Install dependencies
         run: |
-          npm run lint
-          npm test
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
-  # se precisar do gcloud apenas para testes, use o setup padrão — sem componentes extras
+      - name: Lint (se existir script)
+        run: npm run --if-present lint
+
+      - name: Build (se existir)
+        run: npm run --if-present build
+
+      - name: Tests (se existir)
+        run: npm run --if-present test
+
+###############################################################################
+# 2) Setup GCloud (apenas se precisar no CI)
+###############################################################################
   setup-gcloud:
     needs: build-test
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Auth
-        id: gcp-auth
+      - id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Setup gcloud           # ⬅️  NENHUM install_components aqui
+      - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
