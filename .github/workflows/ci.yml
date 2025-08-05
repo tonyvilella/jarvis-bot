@@ -3,24 +3,24 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]        # ajuste se quiser outros branches
+    branches: [main, dev]        # ajuste conforme o seu fluxo
   pull_request:
 
-jobs:
 ###############################################################################
 # 1) Build & Test (Node)
 ###############################################################################
+jobs:
   build-test:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node + cache
+      # Instala Node + cache de dependências
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
+          cache: npm                # acelera builds subsequentes
 
       - name: Install dependencies
         run: |
@@ -33,10 +33,10 @@ jobs:
       - name: Lint (se existir script)
         run: npm run --if-present lint
 
-      - name: Build (se existir)
+      - name: Build (se existir script)
         run: npm run --if-present build
 
-      - name: Tests (se existir)
+      - name: Tests (se existir script)
         run: npm run --if-present test
 
 ###############################################################################
@@ -45,7 +45,6 @@ jobs:
   setup-gcloud:
     needs: build-test
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 

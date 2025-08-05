@@ -2,56 +2,49 @@
 name: Deploy
 
 on:
-  # publica toda vez que algo novo entra na main
   push:
-    branches: [main]          # dispara quando algo cai na main
+    branches: [main]          # dispara sempre que algo entra na main
+  workflow_dispatch:          # botão “Run workflow” manual no GitHub
 
-env:
-  GCP_REGION: us-east4        # ajuste se precisar
-
-env:
-  # ajuste se usar outra região
-  GCP_REGION: us-east4
+env:                          # defina variáveis globais aqui
+  GCP_REGION: us-east4        # troque se usar outra região
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
- dev
-      # 1. Checkout
-      - uses: actions/checkout@v4
+      # 1. Checkout do código
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # 2. Autenticar na GCP com service-account que está no secret
-      - id: auth
+      # 2. Autentica na GCP (Service Account JSON guardado em secret)
+      - name: Auth
+        id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # 3. Instalar gcloud + helper Docker (sem gcloud-beta!)
-      - uses: google-github-actions/setup-gcloud@v2
+      # 3. Instala gcloud (com componente docker) — sem gcloud-beta
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           install_components: docker
 
-      # 4. Build da imagem
-      - name: Build container
+      # 4. Build da imagem no Cloud Build e push para Artifact Registry
+      - name: Build & push image
+        env:
+          TAG: "${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis:${{ github.sha }}"
         run: |
-          IMAGE="$GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis-bot:${{ github.sha }}"
-          docker build -t "$IMAGE" .
-          echo "IMAGE_URI=$IMAGE" >> "$GITHUB_ENV"
+          gcloud builds submit --tag "$TAG"
 
-      # 5. Push da imagem
-      - name: Push container
-        run: docker push "$IMAGE_URI"
-
-      # 6. Deploy no Cloud Run
+      # 5. Deploy (rollout) no Cloud Run
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy jarvis-bot-run \
-            --image="$IMAGE_URI" \
+            --image="$TAG" \
             --platform=managed \
             --region="$GCP_REGION" \
             --port=8080 \
             --allow-unauthenticated
-
