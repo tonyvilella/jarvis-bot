@@ -2,62 +2,63 @@ name: Deploy
 
 on:
   push:
-    branches: [main]          # dispara quando algo entra na main
-  workflow_dispatch:          # botão “Run workflow” no GitHub UI
+    branches:
+      - main          # dispara quando há commit na main
+  workflow_dispatch:  # botão “Run workflow” na UI
 
 concurrency:
-  group: deploy-main          # apenas 1 deploy ativo por vez
+  group: deploy-main  # garante 1 deploy por vez
   cancel-in-progress: true
 
 env:
-  GCP_REGION: us-east4        # ajuste se usar outra região
+  GCP_REGION: us-east4   # ajuste se usar outra região
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1 – checkout do código
+      # 1 – checkout do código
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2 – login na GCP usando a service‑account salva em secret
+      # 2 – autentica na GCP (service‑account salva em secret)
       - name: Auth
         id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # 3 – instala gcloud (helper Docker incluído) e define projeto
+      # 3 – instala gcloud e define o projeto
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      # 4 – autoriza Docker no Artifact Registry
+      # 4 – autoriza Docker no Artifact Registry
       - name: Configure Docker auth
         run: |
           gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 
-      # 5 – build da imagem local e exporta IMAGE_URI
+      # 5 – build da imagem e exporta IMAGE_URI
       - name: Build image
         run: |
           IMAGE_URI="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis-bot:${{ github.sha }}"
           docker build -t "$IMAGE_URI" .
           echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
 
-      # 6 – push da imagem com SHA
+      # 6 – push da imagem com SHA
       - name: Push image (sha)
         run: docker push "$IMAGE_URI"
 
-      # 7 – (🔧 opcional) tag latest para facilitar rollback/manual pull
+      # 7 – (opcional) tag latest
       - name: Tag & push latest
         run: |
           LATEST="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis-bot:latest"
           docker tag "$IMAGE_URI" "$LATEST"
           docker push "$LATEST"
 
-      # 8 – deploy no Cloud Run
+      # 8 – deploy no Cloud Run
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy jarvis-bot-run \
@@ -67,7 +68,7 @@ jobs:
             --port=8080 \
             --allow-unauthenticated
 
-      # 9 – captura a URL pública do serviço
+      # 9 – captura a URL pública do serviço
       - name: Get service URL
         id: url
         run: |
@@ -77,9 +78,9 @@ jobs:
           echo "SERVICE_URL=$URL" >> "$GITHUB_ENV"
           echo "Service URL: $URL"
 
-      # 10 – smoke‑test com até 5 tentativas (espera propagação TLS)
+      # 10 – smoke‑test simples na raiz (/) com retries
       - name: Smoke test
         run: |
           echo "Waiting 60 s for TLS certificate propagation..."
           sleep 60
-          curl -f --retry 5 --retry-delay 10 "$SERVICE_URL/health"
+          curl -f --retry 5 --retry-delay 10 "$SERVICE_URL"
