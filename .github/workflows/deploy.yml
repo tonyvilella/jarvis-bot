@@ -2,80 +2,84 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: [main]          # dispara quando algo entra na main
+  workflow_dispatch:          # botão “Run workflow” no GitHub UI
 
 concurrency:
-  group: deploy-main          # só 1 deploy por vez na main
+  group: deploy-main          # só 1 deploy ativo por vez
   cancel-in-progress: true
 
 env:
-  GCP_REGION: us-east4
+  GCP_REGION: us-east4        # ajuste se usar outra região
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Checkout
-    - uses: actions/checkout@v4
+      # 1 – checkout do código
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    # 2. Autentica na GCP com a service‑account (secrets.GCP_SA_KEY)
-    - name: Auth
-      id: auth
-      uses: google-github-actions/auth@v2
-      with:
-        credentials_json: ${{ secrets.GCP_SA_KEY }}
+      # 2 – login na GCP usando a service‑account salva em secret
+      - name: Auth
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-    # 3. Instala gcloud (com Docker helper já incluso)
-    - name: Setup gcloud
-      uses: google-github-actions/setup-gcloud@v2
-      with:
-        project_id: ${{ secrets.GCP_PROJECT_ID }}
+      # 3 – instala gcloud (sem gcloud‑beta) e define o projeto
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    # 4. Login do Docker no Artifact Registry
-    - name: Configure Docker auth
-      run: |
-        gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+      # 4 – autoriza Docker no Artifact Registry
+      - name: Configure Docker auth
+        run: |
+          gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 
-    # 5. Build da imagem
-    - name: Build image
-      run: |
-        IMAGE_URI="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis-bot:${{ github.sha }}"
-        docker build -t "$IMAGE_URI" .
-        echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+      # 5 – build da imagem e exporta IMAGE_URI
+      - name: Build image
+        run: |
+          IMAGE_URI="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis-bot:${{ github.sha }}"
+          docker build -t "$IMAGE_URI" .
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
 
-    # 6. Push da imagem (sha) + tag latest
-    - name: Push image
-      run: |
-        docker push "$IMAGE_URI"
-        LATEST="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis-bot:latest"
-        docker tag "$IMAGE_URI" "$LATEST"
-        docker push "$LATEST"
+      # 6 – push da imagem com SHA
+      - name: Push image
+        run: docker push "$IMAGE_URI"
 
-    # 7. Deploy no Cloud Run
-    - name: Deploy to Cloud Run
-      run: |
-        gcloud run deploy jarvis-bot-run \
-          --image="$IMAGE_URI" \
-          --platform=managed \
-          --region="${{ env.GCP_REGION }}" \
-          --port=8080 \
-          --allow-unauthenticated
+      # 7 – (🔧 opcional) tag latest para facilitar rollback/manual pull
+      - name: Tag latest
+        run: |
+          LATEST="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis-bot:latest"
+          docker tag "$IMAGE_URI" "$LATEST"
+          docker push "$LATEST"
 
-    # 8. Descobre a URL pública recém‑criada
-    - name: Get service URL
-      id: url
-      run: |
-        URL=$(gcloud run services describe jarvis-bot-run \
-              --region="${{ env.GCP_REGION }}" \
-              --format='value(status.url)')
-        echo "SERVICE_URL=$URL" >> "$GITHUB_ENV"
-        echo "Service URL: $URL"
+      # 8 – deploy no Cloud Run
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy jarvis-bot-run \
+            --image="$IMAGE_URI" \
+            --platform=managed \
+            --region="${{ env.GCP_REGION }}" \
+            --port=8080 \
+            --allow-unauthenticated
 
-    # 9. Smoke test (aguarda propagação do certificado)
-    - name: Smoke test
-      run: |
-        echo "Aguardando 60 s para o certificado TLS propagar..."
-        sleep 60
-        curl -f --retry 5 --retry-delay 10 "$SERVICE_URL/health"
+      # 9 – descobre a URL pública recém‑criada
+      - name: Get service URL
+        id: url
+        run: |
+          URL=$(gcloud run services describe jarvis-bot-run \
+                --region="${{ env.GCP_REGION }}" \
+                --format='value(status.url)')
+          echo "SERVICE_URL=$URL" >> "$GITHUB_ENV"
+          echo "Service URL: $URL"
+
+      # 10 – smoke test: espera certificado & faz curl com retries
+      - name: Smoke test
+        run: |
+          echo "Waiting 60 s for TLS certificate propagation..."
+          sleep 60
+          curl -f --retry 5 --retry-delay 10 "$SERVICE_URL/health"
