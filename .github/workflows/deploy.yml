@@ -2,54 +2,62 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: [main]          # dispara quando algo entra na main
+  workflow_dispatch:          # botão "Run workflow"
 
 concurrency:
-  group: "deploy-main"
+  group: "deploy-main"        # cancela execuções antigas se houver nova
   cancel-in-progress: true
 
 env:
-  GCP_REGION: us-east4
+  GCP_REGION: us-east4        # ajuste se usar outra região
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      # 1 ‑ checkout do código
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 2 ‑ login na GCP usando a service‑account salva em secret
       - name: Auth
         id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      # 3 ‑ instala gcloud (sem docker‑beta) e configura projeto
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
+      # 4 ‑ autoriza Docker no Artifact Registry
       - name: Configure Docker auth
         run: |
           gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 
+      # 5 ‑ build da imagem localmente e exporta IMAGE_URI
       - name: Build image
         run: |
           IMAGE_URI="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis-bot:${{ github.sha }}"
           docker build -t "$IMAGE_URI" .
           echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
 
-      - name: Push image (sha)
+      # 6 ‑ push da imagem com SHA
+      - name: Push image
         run: docker push "$IMAGE_URI"
 
-      - name: Tag & push latest       # opcional
+      # 7 ‑ (⚙️ opcional) tag latest para facilitar rollback/manual pull
+      - name: Tag latest
         run: |
           LATEST="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jarvis-repo/jarvis-bot:latest"
           docker tag "$IMAGE_URI" "$LATEST"
           docker push "$LATEST"
 
+      # 8 ‑ deploy no Cloud Run
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy jarvis-bot-run \
@@ -59,6 +67,7 @@ jobs:
             --port=8080 \
             --allow-unauthenticated
 
-      - name: Smoke test            # opcional
+      # 9 ‑ (⚙️ opcional) smoke test simples
+      - name: Smoke test
         run: |
           curl -f https://jarvis-bot-run-${{ env.GCP_REGION }}-a.run.app/health
