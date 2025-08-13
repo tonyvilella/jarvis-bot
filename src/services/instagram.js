@@ -5,11 +5,12 @@ const axios  = require('axios');
 const crypto = require('crypto');
 const log    = require('../utils/log');
 
-// ======================= Config / Env =======================
-const GRAPH_VERSION     = process.env.GRAPH_VERSION || 'v20.0';
-const IG_USER_ID        = process.env.IG_USER_ID;
-const APP_SECRET        = process.env.APP_SECRET;
+// ===== Env / defaults ==================================================
+const GRAPH_VERSION   = process.env.GRAPH_VERSION || 'v20.0';
+const IG_USER_ID      = process.env.IG_USER_ID;
+const APP_SECRET      = process.env.APP_SECRET;
 
+// Preferência de token: PAGE_ACCESS_TOKEN -> IG_ACCESS_TOKEN -> USER_TOKEN_LL
 const ACCESS_TOKEN =
   process.env.PAGE_ACCESS_TOKEN ||
   process.env.IG_ACCESS_TOKEN   ||
@@ -19,18 +20,19 @@ if (!IG_USER_ID)   throw new Error('IG_USER_ID ausente nas variáveis de ambient
 if (!ACCESS_TOKEN) throw new Error('Defina PAGE_ACCESS_TOKEN (ou IG_ACCESS_TOKEN/USER_TOKEN_LL) nas variáveis de ambiente');
 
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS) || 20_000;
-const HTTP_RETRIES       = Number(process.env.HTTP_RETRIES)       || 2;     // tentativas extras p/ 5xx / erros de rede
-const RETRY_BASE_MS      = Number(process.env.RETRY_BASE_MS)      || 300;   // backoff exponencial: base, 2x, 4x…
+const HTTP_RETRIES       = Number(process.env.HTTP_RETRIES)       || 2;     // tentativas extras p/ 5xx / erros transientes
+const RETRY_BASE_MS      = Number(process.env.RETRY_BASE_MS)      || 300;   // backoff: 300, 600, 1200…
 
-const POLL_TRIES         = Number(process.env.IG_POLL_TRIES)      || 20;    // quantas checagens do container
+const POLL_TRIES         = Number(process.env.IG_POLL_TRIES)      || 20;    // checagens do container
 const POLL_DELAY_MS      = Number(process.env.IG_POLL_DELAY_MS)   || 2_000; // intervalo entre checagens
 
 const MAX_CAPTION_LEN    = 2200;
 
+// Base do Graph
 const BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 log.info('IG Graph %s • user=%s', GRAPH_VERSION, IG_USER_ID);
 
-// ======================= Helpers ============================
+// ===== Helpers =========================================================
 function appSecretProof(token, secret) {
   if (!secret) return undefined;
   return crypto.createHmac('sha256', secret).update(token).digest('hex');
@@ -48,6 +50,7 @@ function safeCaption(txt = '') {
   return s.length > MAX_CAPTION_LEN ? s.slice(0, MAX_CAPTION_LEN) : s;
 }
 
+// adiciona ?ts= para “bustar” cache do Instagram
 function bust(url) {
   const u = String(url || '').trim();
   if (!u) return u;
@@ -57,57 +60,57 @@ function bust(url) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function enrichAxiosError(err, ctx) {
-  const e = new Error(ctx ? `${ctx}: ${err.message}` : err.message);
-  e.code   = err.code;
-  e.status = err.response?.status;
-  e.data   = err.response?.data;
-  e.cause  = err;
-  return e;
+// erros que vale a pena tentar novamente
+function isTransient(err) {
+  const s   = err?.response?.status;
+  const sub = err?.response?.data?.error?.error_subcode;
+  return (s >= 500 && s <= 599) || [4, 32, 613].includes(sub) ||
+         ['ECONNABORTED','ECONNRESET','ETIMEDOUT','EAI_AGAIN'].includes(err?.code);
 }
 
-async function withRetry(fn, ctx) {
+async function withRetry(fn, label = 'http') {
   let attempt = 0;
-  // 1ª tentativa + HTTP_RETRIES re-tentativas
   while (true) {
     try {
       return await fn();
     } catch (err) {
-      const status    = err.response?.status;
-      const retriable =
-        (status >= 500 && status <= 599) ||
-        ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(err.code);
-
-      if (!retriable || attempt >= HTTP_RETRIES) {
-        throw enrichAxiosError(err, ctx);
-      }
-
+      if (!isTransient(err) || attempt >= HTTP_RETRIES) throw err;
       const delay = RETRY_BASE_MS * Math.pow(2, attempt);
-      log.warn('%s falhou (%s %s). Retry em %dms [%d/%d]',
-        ctx || 'http', status || err.code || '-', err.message, delay, attempt + 1, HTTP_RETRIES);
+      log.warn('%s falhou (%s). Retry em %dms [%d/%d]',
+        label,
+        err?.response?.status || err.code || 'err',
+        delay, attempt + 1, HTTP_RETRIES);
       await sleep(delay);
       attempt++;
     }
   }
 }
 
-// ======================= HTTP Client ========================
+// ===== HTTP client (axios) ============================================
 const api = axios.create({
   baseURL: BASE,
   timeout: REQUEST_TIMEOUT_MS,
 });
 
-// Logs enxutos (sem tokens)
-api.interceptors.request.use((config) => {
-  log.debug('HTTP %s %s', config.method?.toUpperCase(), config.url);
-  return config;
+api.interceptors.request.use((cfg) => {
+  log.debug('→ %s %s', (cfg.method || 'GET').toUpperCase(), cfg.baseURL + cfg.url);
+  return cfg;
 });
 api.interceptors.response.use(
-  (res) => res,
-  (err) => Promise.reject(err)
+  (res) => {
+    log.debug('← %d %s', res.status, res.config.baseURL + res.config.url);
+    return res;
+  },
+  (err) => {
+    const s = err?.response?.status;
+    const b = err?.response?.data;
+    log.warn('✖ %s %s (%s)', err?.config?.method?.toUpperCase(), err?.config?.url, s || err.code);
+    if (b) log.debug('  body:', b);
+    return Promise.reject(err);
+  }
 );
 
-// ======================= Funcões públicas ===================
+// ===== Funções públicas ===============================================
 
 /**
  * 1) Perfil — usado pela rota /instagram/ping
@@ -135,7 +138,7 @@ async function createImageContainer(imageUrl, caption = '') {
 
   const { data } = await withRetry(
     () => api.post(`/${IG_USER_ID}/media`, null, { params }),
-    'createImageContainer'
+    'createContainer'
   );
   log.info('container criado: %s', data?.id);
   return data.id; // creation_id
@@ -146,5 +149,71 @@ async function createImagePost(image_url, caption = '') {
   return createImageContainer(image_url, caption);
 }
 
-// Alguns recursos de container têm só 'status_code'.
-// Pedir campos inexist
+// Alguns recursos de container expõem só 'status_code'.
+// Pedir campos inexistentes pode quebrar; então pedimos apenas 'status_code'.
+async function getContainer(creationId) {
+  const params = withAuthParams({ fields: 'status_code' });
+  const { data } = await withRetry(
+    () => api.get(`/${creationId}`, { params }),
+    'getContainer'
+  );
+  return data; // { id, status_code }
+}
+
+// Espera ativa até o container ficar FINISHED
+async function waitForContainer(creationId, tries = POLL_TRIES, delayMs = POLL_DELAY_MS) {
+  for (let i = 0; i < tries; i++) {
+    const d = await getContainer(creationId);
+    const s = d?.status_code;
+    log.debug('container %s • status=%s (%d/%d)', creationId, s, i + 1, tries);
+    if (s === 'FINISHED') return;
+    if (s === 'ERROR') {
+      const err = new Error('Container returned ERROR');
+      err.details = d;
+      throw err;
+    }
+    await sleep(delayMs);
+  }
+  const err = new Error('Timeout waiting media container');
+  err.details = { creationId };
+  throw err;
+}
+
+// Publica um container já criado
+async function publishContainer(creationId) {
+  await waitForContainer(creationId);
+  const params = withAuthParams({ creation_id: creationId });
+
+  const { data } = await withRetry(
+    () => api.post(`/${IG_USER_ID}/media_publish`, null, { params }),
+    'publish'
+  );
+  log.info('publicado: %s', data?.id);
+  return data; // { id: <published media id> }
+}
+
+// compat com seu nome antigo (retorna só o id)
+async function publishPost(creationId) {
+  const data = await publishContainer(creationId);
+  return data.id;
+}
+
+// Helper “one‑shot”: cria + espera + publica
+async function publishImage(imageUrl, caption = '') {
+  const creationId = await createImageContainer(imageUrl, caption);
+  const published  = await publishContainer(creationId);
+  return { creationId, published };
+}
+
+module.exports = {
+  // compat com o que suas rotas já usam
+  getProfile,
+  createImagePost,
+  publishPost,
+
+  // utilitários extras
+  createImageContainer,
+  publishContainer,
+  waitForContainer,
+  publishImage,
+};
