@@ -24,8 +24,7 @@ router.get('/ping', (_req, res) => {
  */
 router.post('/', async (req, res) => {
   const traceId =
-    req.id ||
-    (req.headers['x-cloud-trace-context']?.split('/')[0] ?? '');
+    req.id || (req.headers['x-cloud-trace-context']?.split('/')[0] ?? '');
 
   try {
     const imageUrl  = req.body.imageUrl  ?? req.body.image_url;
@@ -94,8 +93,7 @@ async function runOnce() {
  */
 router.post('/run', async (req, res) => {
   const traceId =
-    req.id ||
-    (req.headers['x-cloud-trace-context']?.split('/')[0] ?? '');
+    req.id || (req.headers['x-cloud-trace-context']?.split('/')[0] ?? '');
 
   const expected = process.env.CRON_KEY;
   if (expected) {
@@ -120,7 +118,8 @@ router.post('/run', async (req, res) => {
 
 /* ----------------------------- Cron local ---------------------------- */
 if (process.env.USE_LOCAL_CRON === 'true') {
-  const cron = require('node-cron'); // carrega só quando necessário
+  // carrega só quando necessário
+  const cron = require('node-cron');
   cron.schedule('0 * * * * *', async () => {
     try { await runOnce(); }
     catch (e) {
