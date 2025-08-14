@@ -6,12 +6,13 @@ const util = require('util');
 
 const LEVELS = Object.freeze(['error', 'warn', 'info', 'debug']);
 
-const envLevel = String(process.env.LOG_LEVEL || 'info').toLowerCase();
+const envLevel   = String(process.env.LOG_LEVEL || 'info').toLowerCase();
 const currentIdx = LEVELS.includes(envLevel) ? LEVELS.indexOf(envLevel) : LEVELS.indexOf('info');
-const allow = (lvl) => LEVELS.indexOf(lvl) <= currentIdx;
+const allow      = (lvl) => LEVELS.indexOf(lvl) <= currentIdx;
 
-const asJson       = /^true$/i.test(process.env.LOG_JSON || '');           // LOG_JSON=true → JSON estruturado (Cloud Logging-friendly)
-const warnToStderr = /^true$/i.test(process.env.LOG_WARN_TO_STDERR || ''); // opcional: warn no stderr
+const asJson       = /^true$/i.test(process.env.LOG_JSON || '');            // LOG_JSON=true → uma linha JSON por log
+const prettyJson   = /^true$/i.test(process.env.LOG_PRETTY || '') && (process.env.NODE_ENV !== 'production');
+const warnToStderr = /^true$/i.test(process.env.LOG_WARN_TO_STDERR || '');  // opcional: warn no stderr
 const serviceName  = process.env.LOG_NAME || 'jarvis-bot';
 
 const baseMeta = Object.freeze({
@@ -21,20 +22,33 @@ const baseMeta = Object.freeze({
   host: os.hostname(),
 });
 
-const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Error);
+const isPlainObject = (v) =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Error);
 
-// redator de segredos (token/secret/password/authorization/appsecret_proof)
-function redact(value) {
+// Redação profunda (sem stringify aqui)
+function redactDeep(value) {
   const seen = new WeakSet();
   const re = /(token|secret|password|authorization|appsecret_proof)/i;
-  return JSON.stringify(value, (k, v) => {
-    if (re.test(k)) return '[redacted]';
-    if (typeof v === 'object' && v !== null) {
+
+  const walk = (v) => {
+    if (v && typeof v === 'object') {
       if (seen.has(v)) return '[circular]';
       seen.add(v);
+      if (Array.isArray(v)) return v.map(walk);
+      const out = {};
+      for (const [k, val] of Object.entries(v)) {
+        out[k] = re.test(k) ? '[redacted]' : walk(val);
+      }
+      return out;
     }
     return v;
-  });
+  };
+
+  return walk(value);
+}
+
+function jsonLine(obj) {
+  return JSON.stringify(obj, null, prettyJson ? 2 : 0);
 }
 
 function write(lvl, args, fixedMeta = {}) {
@@ -43,20 +57,19 @@ function write(lvl, args, fixedMeta = {}) {
   const time = new Date().toISOString();
   const arr  = Array.isArray(args) ? args.slice() : [];
 
-  // pega meta como último argumento se for objeto simples
+  // metadata no último argumento
   let meta;
   if (arr.length && isPlainObject(arr[arr.length - 1])) {
     meta = arr.pop();
   }
 
-  // captura primeiro Error (em qualquer posição)
+  // primeiro Error em qualquer posição
   const err = arr.find((a) => a instanceof Error);
 
-  // formatação estilo console (%s, %d etc.)
+  // mensagem formatada
   const message = arr.length ? util.format(...arr) : '';
 
   if (asJson) {
-    // formato ideal p/ Cloud Logging
     const entry = {
       severity: lvl.toUpperCase(),
       time,
@@ -68,20 +81,25 @@ function write(lvl, args, fixedMeta = {}) {
     if (meta) entry.meta  = meta;
 
     const sink = (lvl === 'error' || (lvl === 'warn' && warnToStderr)) ? console.error : console.log;
-    sink(redact(entry));
+    sink(jsonLine(redactDeep(entry)));
     return;
   }
 
-  // texto simples
-  const prefix = `[${time}] [${lvl}]`;
+  // Texto simples
   const sink   = (lvl === 'error' || (lvl === 'warn' && warnToStderr)) ? console.error : console.log;
+  const prefix = `[${time}] [${lvl}]`;
 
   if (message) sink(prefix, message);
-  if (meta)    sink(prefix, redact({ ...fixedMeta, meta }));
-  if (err && !message) sink(prefix, err.stack || err.message);
+
+  if (meta || (fixedMeta && Object.keys(fixedMeta).length)) {
+    const payload = redactDeep({ ...fixedMeta, ...(meta ? { meta } : {}) });
+    sink(prefix, jsonLine(payload));
+  }
+
+  if (err) sink(prefix, err.stack || err.message);
 }
 
-// logger “filho” com meta fixa (ex.: módulo/rota)
+// logger “filho” com meta fixa (encadeável)
 function child(extraMeta = {}) {
   const fixed = isPlainObject(extraMeta) ? extraMeta : {};
   return {
@@ -89,11 +107,15 @@ function child(extraMeta = {}) {
     warn:  (...a) => write('warn',  a, fixed),
     info:  (...a) => write('info',  a, fixed),
     debug: (...a) => write('debug', a, fixed),
-    child: (m) => child({ ...fixed, ...(m || {}) }),
+    child: (m) => child({ ...fixed, ...(m || {}) }), // mantém encadeamento de meta
   };
 }
 
-// instância padrão (compat com require('../utils/log'))
+// instância padrão
 const log = child();
+
 module.exports = log;
-module.exports.default = log; // compat ESM
+// Exponha a fábrica sem sobrescrever log.child:
+module.exports.childFactory = child;
+module.exports.LEVELS       = LEVELS;
+module.exports.default      = log; // compat ESM
